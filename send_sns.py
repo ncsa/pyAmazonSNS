@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 
-# python 2.7 only!
 # This python script allows any application to send sns alerts to any topic
 # Make sure you create the topic though!
 # Usage: printf <msg> | sms_notify.py --topic=<topic> --sub=<sub>
 
-import boto
+import boto3
 import sys
 import logging
 import time
@@ -23,14 +22,6 @@ rate_limit_secs = 60 #in how many secs?
 # The following message will be sent when the theshold is reached
 suppress_msg = "**PROBLEM** Passed the notification threshold. There are more problems than has been paged to you. Please check nagios NOW!"
 
-
-def sns_setup():
-    region = boto.regioninfo.RegionInfo(name=tornado.options.options.region, endpoint="sns.%s.amazonaws.com" % (tornado.options.options.region))
-
-    # AmazonAccountName: snspublish Credentials are here. This account can only post to SNS, so, if it is ever compromised, just delete the account!
-    sns = boto.connect_sns("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY", region=region)
-
-    return sns
 
 def rate_limit(sns, arn, msg, sub):
 
@@ -72,7 +63,7 @@ def rate_limit(sns, arn, msg, sub):
 
 def send_sns(topic, msg, sub):
 
-    sns = sns_setup()
+    sns = boto3.client('sns')
 
     arn = ""
     for topics in sns.get_all_topics()["ListTopicsResponse"]["ListTopicsResult"]["Topics"]:
@@ -96,12 +87,12 @@ def send_text(number, msg, sub):
     This is useful if your notifications are more dynamic.
     """
 
-    sns = sns_setup()
+    sns = boto3.client('sns')
     if tornado.options.options.rate_limit == True:
         # The ratelimit function needs changes to support this
         raise NotImplementedError
     else:
-        print sns.publish(PhoneNumber=number, Message=msg, Subject=sub)
+        print sns.publish(PhoneNumber=number, Message=msg)
 
 
 def get_msg():
@@ -117,8 +108,7 @@ def get_msg():
 
     return msg
 
-if __name__ == "__main__":
-    
+def main():    
     tornado.options.define("number", help="specify the destination phone number", default="", type=str)
     tornado.options.define("topic", help="specify the destination topic", default="", type=str)
     tornado.options.define("sub", help="specify the subject of the message", default="", type=str)
@@ -133,7 +123,12 @@ if __name__ == "__main__":
         else:
             # Phone number, but no topic
             msg = get_msg()
-            send_text(tornado.options.options.number, msg, tornado.options.options.sub)
+            number = tornado.options.options.number
+            if '@' in number:
+               number = number.split('@')[0]
+            if len(number) == 10:
+               number = '1' + number
+            send_text(number, msg, tornado.options.options.sub)
     else:
         # topic specified
         if tornado.options.options.number != "":
@@ -141,3 +136,5 @@ if __name__ == "__main__":
         msg = get_msg()
         send_sns(tornado.options.options.topic, msg, tornado.options.options.sub)
     
+if __name__ == "__main__":
+    main()
