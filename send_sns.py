@@ -24,10 +24,18 @@ rate_limit_secs = 60 #in how many secs?
 suppress_msg = "**PROBLEM** Passed the notification threshold. There are more problems than has been paged to you. Please check nagios NOW!"
 
 
+def sns_setup():
+    region = boto.regioninfo.RegionInfo(name=tornado.options.options.region, endpoint="sns.%s.amazonaws.com" % (tornado.options.options.region))
+
+    # AmazonAccountName: snspublish Credentials are here. This account can only post to SNS, so, if it is ever compromised, just delete the account!
+    sns = boto.connect_sns("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY", region=region)
+
+    return sns
+
 def rate_limit(sns, arn, msg, sub):
 
     curr_time = int(time.time())
-    
+
     # get last five alerts sent out
     time_rate_bash_command = "cat /var/log/nagios/nagios.log | grep " + tornado.options.options.topic + " | awk -F \" \" '{print $1}' | tr -d \"[]\" | tail -n "+ str(rate_limit_threshold)
     time_rate_bash_output = subprocess.check_output(time_rate_bash_command, shell=True)
@@ -63,11 +71,9 @@ def rate_limit(sns, arn, msg, sub):
     
 
 def send_sns(topic, msg, sub):
-    region = boto.regioninfo.RegionInfo(name=tornado.options.options.region, endpoint="sns.%s.amazonaws.com" % (tornado.options.options.region))
- 
-    # AmazonAccountName: snspublish Credentials are here. This account can only post to SNS, so, if it is ever compromised, just delete the account!
-    sns = boto.connect_sns("AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY", region=region)
-    
+
+    sns = sns_setup()
+
     arn = ""
     for topics in sns.get_all_topics()["ListTopicsResponse"]["ListTopicsResult"]["Topics"]:
         if topic in topics["TopicArn"]:
@@ -81,19 +87,24 @@ def send_sns(topic, msg, sub):
         rate_limit(sns, arn, msg, sub)   
     else:
         print sns.publish(arn, msg, sub)
-    
-if __name__ == "__main__":
-    
-    tornado.options.define("topic", help="specify the destination topic", default="", type=str)
-    tornado.options.define("sub", help="specify the subject of the message", default="", type=str)
-    tornado.options.define("rate_limit", help="use this to run in rate limited mode. DEFAULT=False", default=False, type=bool)    
-    tornado.options.define("region", help="specify the AWS region to use", default="us-east-1", type=str)
-    tornado.options.parse_command_line()
-    
-    if tornado.options.options.topic == "":
-        logging.error("No topic specified. use --topic or look at --help for more info.")
-        exit(0)
-    
+
+
+def send_text(number, msg, sub):
+    """
+    Sends a notification to a phone number, and not to a topic.
+
+    This is useful if your notifications are more dynamic.
+    """
+
+    sns = sns_setup()
+    if tornado.options.options.rate_limit == True:
+        # The ratelimit function needs changes to support this
+        raise NotImplementedError
+    else:
+        print sns.publish(PhoneNumber=number, Message=msg, Subject=sub)
+
+
+def get_msg():
     msg = ""
     
     #message is piped in
@@ -104,5 +115,29 @@ if __name__ == "__main__":
     if msg == "":
         msg = "\n"
 
+    return msg
+
+if __name__ == "__main__":
     
-    send_sns(tornado.options.options.topic, msg, tornado.options.options.sub)
+    tornado.options.define("number", help="specify the destination phone number", default="", type=str)
+    tornado.options.define("topic", help="specify the destination topic", default="", type=str)
+    tornado.options.define("sub", help="specify the subject of the message", default="", type=str)
+    tornado.options.define("rate_limit", help="use this to run in rate limited mode. DEFAULT=False", default=False, type=bool)    
+    tornado.options.define("region", help="specify the AWS region to use", default="us-east-1", type=str)
+    tornado.options.parse_command_line()
+    
+    if tornado.options.options.topic == "":
+        if tornado.options.options.number == "":
+            logging.error("No topic or phone number specified. use --topic or --number or look at --help for more info.")
+            exit(0)
+        else:
+            # Phone number, but no topic
+            msg = get_msg()
+            send_text(tornado.options.options.number, msg, tornado.options.options.sub)
+    else:
+        # topic specified
+        if tornado.options.options.number != "":
+            logging.warning("Both topic and phone number specified. Notifying the topic. See --help for more info.")
+        msg = get_msg()
+        send_sns(tornado.options.options.topic, msg, tornado.options.options.sub)
+    
